@@ -1,0 +1,659 @@
+import 'package:desarrollo_jmas/app/configs/auth/permission_widget.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/ccontables_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/productos_controller.dart';
+import 'package:desarrollo_jmas/app/widgets/forms/customListaDesplegableTipo.dart';
+import 'package:desarrollo_jmas/app/widgets/forms/custom_field_numero.dart';
+import 'package:desarrollo_jmas/app/widgets/forms/custom_field_texto.dart';
+import 'package:desarrollo_jmas/app/widgets/mensajes.dart';
+import 'package:flutter/material.dart';
+
+
+class ListCcontablesPage extends StatefulWidget {
+  const ListCcontablesPage({super.key});
+
+  @override
+  State<ListCcontablesPage> createState() => _ListCcontablesPageState();
+}
+
+class _ListCcontablesPageState extends State<ListCcontablesPage> {
+  final CcontablesController _ccontablesController = CcontablesController();
+  final ProductosController _productosController = ProductosController();
+  late Future<Map<int, Productos>> _productosFuture;
+
+  List<CContables> _filteredCuentas = [];
+  List<CContables> _allCuentas = [];
+  bool _isLoading = true;
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+    _productosFuture = _loadProductos();
+  }
+
+  Future<Map<int, Productos>> _loadProductos() async {
+    try {
+      final productos = await _productosController.listProductos();
+      return {for (var prod in productos) prod.id_Producto!: prod};
+    } catch (e) {
+      throw Exception('Error al cargar productos: $e');
+    }
+  }
+
+  Future<void> _loadData() async {
+    try {
+      List<CContables> ccuentas = await _ccontablesController.listCcontables();
+      setState(() {
+        _allCuentas = ccuentas;
+        _filteredCuentas = ccuentas;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error al cargar datos: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _filterCuentas(String query, Map<int, Productos> productosCache) {
+    setState(() {
+      if (query.isEmpty) {
+        _filteredCuentas = _allCuentas;
+      } else {
+        _filteredCuentas = _allCuentas.where((cuenta) {
+          final nombreProducto =
+              productosCache[cuenta.idProducto]?.prodDescripcion ?? '';
+          return cuenta.cC_Cuenta.toString().contains(query) ||
+              cuenta.cC_SCTA.toString().contains(query) ||
+              cuenta.cC_Detalle!.toLowerCase().contains(query.toLowerCase()) ||
+              cuenta.idProducto.toString().contains(query) ||
+              nombreProducto.toLowerCase().contains(query.toLowerCase());
+        }).toList();
+      }
+    });
+  }
+
+  Future<void> _showEditDialog(
+      CContables cuenta, Map<int, Productos> productosCache) async {
+    final formKey = GlobalKey<FormState>();
+    final cuentaController =
+        TextEditingController(text: cuenta.cC_Cuenta?.toString());
+    final sctaController =
+        TextEditingController(text: cuenta.cC_SCTA?.toString());
+    final detalleController = TextEditingController(text: cuenta.cC_Detalle);
+    final productoController =
+        TextEditingController(text: cuenta.ccProducto?.toString());
+
+    // Controlador para el texto combinado
+    final cuentaCompletaController = TextEditingController();
+
+    // Función para actualizar la cuenta completa
+    void actualizarCuentaCompleta() {
+      final cuentaText = cuentaController.text;
+      final sctaText = sctaController.text;
+
+      if (cuentaText.isNotEmpty && sctaText.isNotEmpty) {
+        cuentaCompletaController.text = '$cuentaText-$sctaText';
+      } else if (cuentaText.isNotEmpty) {
+        cuentaCompletaController.text = cuentaText;
+      } else {
+        cuentaCompletaController.text = '';
+      }
+    }
+
+    // Inicializar el campo de cuenta completa con los valores existentes
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      actualizarCuentaCompleta();
+    });
+
+    // Listeners para actualizar en tiempo real
+    cuentaController.addListener(actualizarCuentaCompleta);
+    sctaController.addListener(actualizarCuentaCompleta);
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(
+                '${productosCache[cuenta.idProducto]?.id_Producto ?? 'Desconocido'} ${productosCache[cuenta.idProducto]?.prodDescripcion ?? 'Desconocido'}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                ),
+              ),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CustomTextFieldNumero(
+                        controller: productoController,
+                        labelText: 'ccProducto',
+                        prefixIcon: Icons.numbers,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Ingrese un número de cuenta';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Campo para cuenta (parte principal)
+                      CustomTextFieldNumero(
+                        controller: cuentaController,
+                        labelText: 'Cuenta*',
+                        prefixIcon: Icons.numbers,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Campo obligatorio';
+                          }
+                          if (int.tryParse(value) == null) {
+                            return 'Debe ser un número válido';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Campo para subcuenta
+                      CustomTextFieldNumero(
+                        controller: sctaController,
+                        labelText: 'Subcuenta',
+                        prefixIcon: Icons.numbers,
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Mostrar cuenta completa (solo lectura)
+                      TextFormField(
+                        controller: cuentaCompletaController,
+                        decoration: const InputDecoration(
+                          labelText: 'Detalle',
+                          prefixIcon: Icon(Icons.account_balance),
+                          border: OutlineInputBorder(),
+                          filled: true,
+                          fillColor: Color(0xFFf5f5f5),
+                        ),
+                        readOnly: true,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blueGrey,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'La cuenta detalle se genera automáticamente',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    // Limpiar listeners antes de cerrar
+                    cuentaController.removeListener(actualizarCuentaCompleta);
+                    sctaController.removeListener(actualizarCuentaCompleta);
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (formKey.currentState!.validate()) {
+                      final updatedCuenta = cuenta.copyWith(
+                        ccProducto: productoController.text,
+                        cC_Cuenta: int.tryParse(cuentaController.text),
+                        cC_SCTA: int.tryParse(sctaController.text),
+                        cC_Detalle: cuentaCompletaController.text,
+                      );
+
+                      final success = await _ccontablesController
+                          .updateCcontable(updatedCuenta);
+                      if (success) {
+                        // Limpiar listeners antes de cerrar
+                        cuentaController
+                            .removeListener(actualizarCuentaCompleta);
+                        sctaController.removeListener(actualizarCuentaCompleta);
+                        // ignore: use_build_context_synchronously
+                        Navigator.pop(context);
+                        _loadData(); // Recargar datos
+                        showOk(context, 'Cuenta actualizada correctamente');
+                      } else {
+                        // ignore: use_build_context_synchronously
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('Error al actualizar la cuenta')),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    // Limpiar controllers y listeners cuando el diálogo se cierre
+    Future.microtask(() {
+      cuentaController.dispose();
+      sctaController.dispose();
+      detalleController.dispose();
+      productoController.dispose();
+      cuentaCompletaController.dispose();
+    });
+  }
+
+  Future<void> _showAddDialog(Map<int, Productos> productosCache) async {
+    final formKey = GlobalKey<FormState>();
+    final cuentaController = TextEditingController();
+    final sctaController = TextEditingController();
+    final detalleController = TextEditingController();
+    final productoController = TextEditingController();
+    Productos? selectedProduct;
+
+    // Controlador para el texto combinado
+    final cuentaCompletaController = TextEditingController();
+
+    // Obtener productos sin cuenta
+    final productosSinCuenta =
+        await _ccontablesController.getProductosSinCuenta();
+    final productosDisponibles = productosSinCuenta
+        .map((id) => productosCache[id])
+        .where((producto) => producto != null)
+        .cast<Productos>()
+        .toList();
+
+    if (productosDisponibles.isEmpty) {
+      // ignore: use_build_context_synchronously
+      showError(context, 'Todos los productos ya tienen cuenta asociada');
+      return;
+    }
+
+    // Seleccionar el primer producto por defecto
+    selectedProduct = productosDisponibles.first;
+
+    // Función para actualizar la cuenta completa
+    void actualizarCuentaCompleta() {
+      final cuenta = cuentaController.text;
+      final scta = sctaController.text;
+
+      if (cuenta.isNotEmpty && scta.isNotEmpty) {
+        cuentaCompletaController.text = '$cuenta-$scta';
+      } else if (cuenta.isNotEmpty) {
+        cuentaCompletaController.text = cuenta;
+      } else {
+        cuentaCompletaController.text = '';
+      }
+    }
+
+    // Listeners para actualizar en tiempo real
+    cuentaController.addListener(actualizarCuentaCompleta);
+    sctaController.addListener(actualizarCuentaCompleta);
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text(
+                'Agregar Nueva Cuenta',
+                textAlign: TextAlign.center,
+              ),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: CustomListaDesplegableTipo<Productos>(
+                              value: selectedProduct,
+                              labelText: 'Producto',
+                              items: productosDisponibles,
+                              onChanged: (producto) {
+                                setState(() {
+                                  selectedProduct = producto;
+                                });
+                              },
+                              itemLabelBuilder: (producto) =>
+                                  '${producto.id_Producto ?? 'Sin ID'} ${producto.prodDescripcion ?? 'Sin nombre'}',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      CustomTextFieldNumero(
+                        controller: productoController,
+                        labelText: 'ccProducto*',
+                        prefixIcon: Icons.numbers,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Campo obligatorio';
+                          }
+                          if (int.tryParse(value) == null) {
+                            return 'Debe ser un número válido';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Campo para cuenta (parte principal)
+                      CustomTextFieldNumero(
+                        controller: cuentaController,
+                        labelText: 'Cuenta*',
+                        prefixIcon: Icons.numbers,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Campo obligatorio';
+                          }
+                          if (int.tryParse(value) == null) {
+                            return 'Debe ser un número válido';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Campo para subcuenta
+                      CustomTextFieldNumero(
+                        controller: sctaController,
+                        labelText: 'Subcuenta',
+                        prefixIcon: Icons.numbers,
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Mostrar cuenta detalle (solo lectura)
+                      TextFormField(
+                        controller: cuentaCompletaController,
+                        decoration: const InputDecoration(
+                          labelText: 'Cuenta Detalle',
+                          prefixIcon: Icon(Icons.account_balance),
+                          border: OutlineInputBorder(),
+                          filled: true,
+                          fillColor: Color(0xFFf5f5f5),
+                        ),
+                        readOnly: true,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blueGrey,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'La cuenta detalle se genera automáticamente',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    // Limpiar listeners antes de cerrar
+                    cuentaController.removeListener(actualizarCuentaCompleta);
+                    sctaController.removeListener(actualizarCuentaCompleta);
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (formKey.currentState!.validate()) {
+                      if (selectedProduct == null) {
+                        showError(context, 'Seleccione un producto');
+                        return;
+                      }
+
+                      final nuevaCuenta = CContables(
+                        id_CConTable: 0,
+                        ccProducto: productoController.text,
+                        cC_Cuenta: int.tryParse(cuentaController.text),
+                        cC_SCTA: int.tryParse(sctaController.text),
+                        cC_Detalle: cuentaCompletaController.text,
+                        idProducto: selectedProduct!.id_Producto,
+                      );
+
+                      try {
+                        final success = await _ccontablesController
+                            .addCcontable(nuevaCuenta);
+                        if (success) {
+                          // Limpiar listeners antes de cerrar
+                          cuentaController
+                              .removeListener(actualizarCuentaCompleta);
+                          sctaController
+                              .removeListener(actualizarCuentaCompleta);
+                          // ignore: use_build_context_synchronously
+                          Navigator.pop(context);
+                          _loadData();
+                          showOk(context, 'Cuenta agregada correctamente');
+                        } else {
+                          // ignore: use_build_context_synchronously
+                          showError(context, 'Error al agregar la cuenta');
+                        }
+                      } catch (e) {
+                        // ignore: use_build_context_synchronously
+                        showError(context, 'Error: ${e.toString()}');
+                      }
+                    }
+                  },
+                  child: const Text('Agregar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    // Limpiar controllers y listeners cuando el diálogo se cierre
+    Future.microtask(() {
+      cuentaController.dispose();
+      sctaController.dispose();
+      detalleController.dispose();
+      productoController.dispose();
+      cuentaCompletaController.dispose();
+    });
+  }
+
+  // ... (imports y código anterior se mantiene igual)
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Center(
+          child: Text(
+            'Lista de Cuentas Contables',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+        backgroundColor: Colors.blue.shade900,
+      ),
+      body: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: CustomTextFielTexto(
+                  controller: _searchController,
+                  labelText:
+                      'Buscar por Cuenta, SCTA, Detalle, ID Producto o Nombre del Producto',
+                  prefixIcon: Icons.search,
+                  onChanged: (query) {
+                    // ignore: unnecessary_null_comparison
+                    if (_productosFuture != null) {
+                      _productosFuture.then((productosCache) {
+                        _filterCuentas(query, productosCache);
+                      });
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              PermissionWidget(
+                permission: 'canCContable',
+                child: IconButton(
+                  icon: Icon(
+                    Icons.add_box_rounded,
+                    color: Colors.blue.shade900,
+                  ),
+                  tooltip: 'Agregar Cuenta Contable',
+                  onPressed: () async {
+                    final productosCache = await _productosFuture;
+                    _showAddDialog(productosCache);
+                  },
+                ),
+              ),
+            ],
+          ),
+          Expanded(
+            child: _filteredCuentas.isEmpty
+                ? Center(
+                    child: _isLoading
+                        ? CircularProgressIndicator(color: Colors.blue.shade900)
+                        : const Text('No se encontraron resultados'),
+                  )
+                : FutureBuilder<Map<int, Productos>>(
+                    future: _productosFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      } else if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            'Error al cargar productos: ${snapshot.error}',
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        );
+                      }
+
+                      final productosCache = snapshot.data ?? {};
+
+                      return GridView.builder(
+                        padding: const EdgeInsets.all(10),
+                        gridDelegate:
+                            const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 450,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                          childAspectRatio: 1.5,
+                        ),
+                        itemCount: _filteredCuentas.length,
+                        itemBuilder: (context, index) {
+                          final cuenta = _filteredCuentas[index];
+                          final nombreProducto =
+                              productosCache[cuenta.idProducto]
+                                      ?.prodDescripcion ??
+                                  'Desconocido';
+
+                          return Card(
+                            color: const Color.fromARGB(255, 200, 238, 255),
+                            elevation: 6,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.start,
+                              children: [
+                                // Encabezado con fondo blanco para ccProducto
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.shade900,
+                                    borderRadius: const BorderRadius.only(
+                                      topLeft: Radius.circular(12),
+                                      topRight: Radius.circular(12),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'ccProducto: ${cuenta.ccProducto}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 20,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                      PermissionWidget(
+                                        permission: 'canCContable',
+                                        child: IconButton(
+                                          icon: const Icon(Icons.edit,
+                                              color: Colors.white),
+                                          onPressed: () {
+                                            _showEditDialog(
+                                                cuenta, productosCache);
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                // Contenido de la tarjeta
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                            'Id en Almacén: ${cuenta.idProducto}'),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          nombreProducto,
+                                          style: const TextStyle(
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text('Cuenta: ${cuenta.cC_Cuenta}'),
+                                        const SizedBox(height: 8),
+                                        Text('SCTA: ${cuenta.cC_SCTA}'),
+                                        const SizedBox(height: 8),
+                                        Text('Detalle: ${cuenta.cC_Detalle}'),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}

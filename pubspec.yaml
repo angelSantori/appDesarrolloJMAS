@@ -1,0 +1,50 @@
+name: desarrollo_jmas
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  cupertino_icons: ^1.0.8
+  http: ^1.2.2 #WEB
+  shared_preferences: ^2.3.3 #Guardar token
+  intl: ^0.20.2 #Fecha
+  pdf: ^3.11.1 #PDF
+  printing: ^5.13.4 #Imprimir
+  path_provider: ^2.1.5 #Archivos sistema
+  file_picker: ^8.1.6 #Seleccionar carpeta
+  image_picker: ^1.1.2 #Seleccionar imagen   
+  bitsdojo_window: ^0.1.0 #Tamaño pantaña
+  qr_flutter: ^4.1.0 #QR
+  flutter_svg: ^2.0.17 #SVG
+  excel: ^4.0.6
+  universal_html: ^2.2.4
+  open_file: ^3.5.10
+  syncfusion_flutter_xlsio: ^29.2.11
+  flutter_localization: ^0.3.3
+  syncfusion_flutter_datepicker: ^29.2.11
+  fl_chart: ^1.0.0 #Graficas
+  file_saver: ^0.3.1 #Guardar
+  flutter_typeahead: ^5.2.0 #Autocomplete
+  url_launcher: ^6.3.2 #URL
+  csv: ^6.0.0 #CSV
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/sinFoto.jpg
+    - assets/icons/
+    - assets/images/logo_jmas_sf.png
+    - assets/images/
+    - assets/calendar/

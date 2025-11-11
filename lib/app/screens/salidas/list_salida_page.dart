@@ -1,0 +1,1467 @@
+import 'package:desarrollo_jmas/app/screens/salidas/details_salida_page.dart';
+import 'package:desarrollo_jmas/app/screens/salidas/widgets/excel_salidas.dart';
+import 'package:desarrollo_jmas/app/screens/salidas/widgets/otros.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/almacenes_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/calles_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/ccontables_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/colonias_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/contratistas_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/juntas_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/orden_servicio_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/padron_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/productos_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/salidas_controller.dart';
+import 'package:desarrollo_jmas/app/configs/controllers/users_controller.dart';
+import 'package:desarrollo_jmas/app/widgets/forms/customListaDesplegableTipo.dart';
+import 'package:desarrollo_jmas/app/widgets/forms/custom_autocomplete_field.dart';
+import 'package:desarrollo_jmas/app/widgets/forms/custom_field_texto.dart';
+import 'package:desarrollo_jmas/app/widgets/mensajes.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:intl/intl.dart';
+
+class ListSalidaPage extends StatefulWidget {
+  final String? userRole;
+  final String? userName;
+  const ListSalidaPage({super.key, this.userRole, this.userName});
+
+  @override
+  State<ListSalidaPage> createState() => _ListSalidaPageState();
+}
+
+class _ListSalidaPageState extends State<ListSalidaPage> {
+  final SalidasController _salidasController = SalidasController();
+  final CcontablesController _ccontablesController = CcontablesController();
+  final ProductosController _productosController = ProductosController();
+  final JuntasController _juntasController = JuntasController();
+  final AlmacenesController _almacenesController = AlmacenesController();
+  final UsersController _usersController = UsersController();
+  final PadronController _padronController = PadronController();
+  final ColoniasController _coloniasController = ColoniasController();
+  final CallesController _callesController = CallesController();
+  final OrdenServicioController _ordenServicioController =
+      OrdenServicioController();
+  final ContratistasController _contratistasController =
+      ContratistasController();
+
+  final TextEditingController _searchController = TextEditingController();
+  List<SalidaLista> _allSalidas = [];
+  List<SalidaLista> _filteredSalidas = [];
+
+  DateTime? _startDate;
+  DateTime? _endDate;
+
+  Map<int, Productos> _productosCache = {};
+  Map<int, Users> _usersCache = {};
+  // ignore: unused_field
+  Map<int, Juntas> _juntasCache = {};
+  // ignore: unused_field
+  Map<int, Almacenes> _almacenCache = {};
+  // ignore: unused_field
+  Map<int, Users> _userAsignadoCache = {};
+  // ignore: unused_field
+  Map<int, Users> _userAutorizaCache = {};
+  // ignore: unused_field
+  Map<int, Users> _userCreoSalidaCache = {};
+
+  List<Juntas> _juntas = [];
+  List<Almacenes> _almacenes = [];
+  List<Padron> _padrones = [];
+  List<OrdenServicio> _ordenesServicios = [];
+  List<Colonias> _colonias = [];
+  List<Calles> _calles = [];
+  List<Users> _userAsignado = [];
+  List<Users> _userAutoriza = [];
+  List<Users> _userCreoSalida = [];
+  List<Contratistas> _contratistas = [];
+
+  String? _selectedJunta;
+  String? _selectedColonia;
+  String? _selectedCalle;
+  String? _selectedAlmacen;
+  String? _selectedPadron;
+  String? _selectedUserAsignado;
+
+  bool _isLoading = true;
+
+  int _currentPage = 1;
+  int _itemsPerPage = 20;
+  int get _totalPages =>
+      (_filteredSalidasGrouped.length / _itemsPerPage).ceil();
+
+  DateTime? _selectedMonth;
+  // ignore: unused_field
+  bool _isGeneratingExcel = false;
+  bool _showExportOptions = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+    _searchController.addListener(_filterSalidas);
+  }
+
+  Map<String, List<SalidaLista>> get _paginatedGroupedSalidas {
+    // Primero agrupar todas las salidas filtradas
+    Map<String, List<SalidaLista>> groupedSalidas = {};
+    for (var salida in _filteredSalidas) {
+      groupedSalidas.putIfAbsent(salida.salida_CodFolio!, () => []);
+      groupedSalidas[salida.salida_CodFolio]!.add(salida);
+    }
+
+    // Convertir a lista de grupos y paginar
+    final groupsList = groupedSalidas.entries.toList();
+    final startIndex = (_currentPage - 1) * _itemsPerPage;
+    final endIndex = startIndex + _itemsPerPage;
+
+    // Crear un nuevo mapa solo con los grupos de la página actual
+    final paginatedGroups = groupsList.sublist(
+      startIndex.clamp(0, groupsList.length),
+      endIndex.clamp(0, groupsList.length),
+    );
+
+    return Map.fromEntries(paginatedGroups);
+  }
+
+  Map<String, List<SalidaLista>> get _filteredSalidasGrouped {
+    Map<String, List<SalidaLista>> grouped = {};
+    for (var salida in _filteredSalidas) {
+      grouped.putIfAbsent(salida.salida_CodFolio!, () => []);
+      grouped[salida.salida_CodFolio]!.add(salida);
+    }
+    return grouped;
+  }
+
+  Future<void> _reloadData() async {
+    setState(() => _isLoading = true);
+    try {
+      final salidas = await _salidasController.listSalidasOptimizado();
+      setState(() {
+        _allSalidas = salidas;
+        _filterSalidas(); // Esto aplicará los filtros actuales a los nuevos datos
+      });
+    } catch (e) {
+      print('Error al recargar datos: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loadData() async {
+    try {
+      // Cargar salidas
+      final salidas = await _salidasController.listSalidasOptimizado();
+      final productos = await _productosController.listProductos();
+      final users = await _usersController.listUsers();
+      final juntas = await _juntasController.listJuntas();
+      final almacen = await _almacenesController.listAlmacenes();
+      final padrones = await _padronController.listPadron();
+      final ordenesServicios = await _ordenServicioController
+          .listOrdenServicio();
+      final colonias = await _coloniasController.listColonias();
+      final calles = await _callesController.listCalles();
+      final contratista = await _contratistasController.listContratistas();
+
+      setState(() {
+        _allSalidas = salidas;
+        _filteredSalidas = salidas;
+
+        _productosCache = {for (var prod in productos) prod.id_Producto!: prod};
+        _usersCache = {for (var us in users) us.id_User!: us};
+        _userAsignadoCache = {for (var usAs in users) usAs.id_User!: usAs};
+        _userAutorizaCache = {for (var usAu in users) usAu.id_User!: usAu};
+        _userCreoSalidaCache = {for (var usCS in users) usCS.id_User!: usCS};
+        _juntasCache = {for (var jn in juntas) jn.idJunta!: jn};
+        _almacenCache = {for (var alm in almacen) alm.id_Almacen!: alm};
+
+        _juntas = juntas;
+        _almacenes = almacen;
+        _padrones = padrones;
+        _ordenesServicios = ordenesServicios;
+        _colonias = colonias;
+        _calles = calles;
+        _userAsignado = users;
+        _userAutoriza = users;
+        _userCreoSalida = users;
+        _contratistas = contratista;
+
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error al cargar datos: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _filterSalidas() {
+    setState(() {
+      _filteredSalidas = _allSalidas.where((salida) {
+        final fechaString = salida.salida_Fecha;
+        final fecha = fechaString != null ? parseDate(fechaString) : null;
+
+        // Normalize dates by ignoring time components for comparison
+        DateTime? normalizedFecha;
+        if (fecha != null) {
+          normalizedFecha = DateTime(fecha.year, fecha.month, fecha.day);
+        }
+
+        DateTime? normalizedStartDate;
+        if (_startDate != null) {
+          normalizedStartDate = DateTime(
+            _startDate!.year,
+            _startDate!.month,
+            _startDate!.day,
+          );
+        }
+
+        DateTime? normalizedEndDate;
+        if (_endDate != null) {
+          normalizedEndDate = DateTime(
+            _endDate!.year,
+            _endDate!.month,
+            _endDate!.day,
+          );
+        }
+
+        bool matchesDate = true;
+        if (normalizedFecha != null) {
+          if (normalizedStartDate != null) {
+            matchesDate =
+                matchesDate &&
+                normalizedFecha.isAfter(
+                  normalizedStartDate.subtract(const Duration(days: 1)),
+                );
+          }
+          if (normalizedEndDate != null) {
+            matchesDate =
+                matchesDate &&
+                normalizedFecha.isBefore(
+                  normalizedEndDate.add(const Duration(days: 1)),
+                );
+          }
+        } else if (_startDate != null || _endDate != null) {
+          matchesDate = false;
+        }
+
+        // Match Folio (nuevo filtro agregado)
+        final searchText = _searchController.text.toLowerCase();
+        final matchesFolio =
+            searchText.isEmpty ||
+            (salida.salida_CodFolio?.toLowerCase().contains(searchText) ??
+                false) ||
+            (salida.salidaFolioOST?.toLowerCase().contains(searchText) ??
+                false);
+
+        //Match Junta
+        final matchesJunta =
+            _selectedJunta == null ||
+            salida.id_Junta.toString() == _selectedJunta;
+
+        //Match Almacen
+        final matchesAlmacen =
+            _selectedAlmacen == null ||
+            salida.id_Almacen.toString() == _selectedAlmacen;
+
+        //Match Colonia
+        final matchesColonia =
+            _selectedColonia == null ||
+            salida.idColonia.toString() == _selectedColonia;
+
+        //Match Calle
+        final matchesCalle =
+            _selectedCalle == null ||
+            salida.idCalle.toString() == _selectedCalle;
+
+        //Match Padron
+        final matchesPadron =
+            _selectedPadron == null ||
+            salida.idPadron.toString() == _selectedPadron;
+
+        //Match UserAsignado
+        final matchesUserAsignado =
+            _selectedUserAsignado == null ||
+            salida.id_User_Asignado.toString() == _selectedUserAsignado;
+
+        return matchesFolio &&
+            matchesDate &&
+            matchesJunta &&
+            matchesAlmacen &&
+            matchesColonia &&
+            matchesCalle &&
+            matchesPadron &&
+            matchesUserAsignado;
+      }).toList();
+      _currentPage = 1;
+    });
+  }
+
+  Future<void> _selectDateRange(BuildContext context) async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDateRange: _startDate != null && _endDate != null
+          ? DateTimeRange(start: _startDate!, end: _endDate!)
+          : null,
+      builder: (context, child) {
+        return Localizations.override(
+          context: context,
+          locale: const Locale('es', 'ES'), // Fuerza el formato dd/mm/yyyy
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              textTheme: Theme.of(context).textTheme.copyWith(
+                titleLarge: const TextStyle(color: Colors.black),
+              ),
+            ),
+            child: child!,
+          ),
+        );
+      },
+      helpText: 'Seleccionar rango', // Personaliza el texto principal
+      cancelText: 'Cancelar', // Personaliza el texto del botón Cancelar
+      confirmText: 'Confirmar', // Personaliza el texto del botón Confirmar
+      saveText: 'Guardar', // Personaliza el texto del botón Guardar
+      fieldStartLabelText:
+          'Fecha inicial', // Personaliza la etiqueta de fecha inicial
+      fieldEndLabelText:
+          'Fecha final', // Personaliza la etiqueta de fecha final
+      errorFormatText:
+          'Formato inválido (dd/mm/yyyy)', // Mensaje de error para formato
+      errorInvalidText:
+          'Rango inválido', // Mensaje de error para rango inválido
+      errorInvalidRangeText:
+          'Rango no válido', // Mensaje de error para rango no válido
+    );
+    if (picked != null) {
+      setState(() {
+        _startDate = picked.start;
+        _endDate = picked.end;
+      });
+      _filterSalidas();
+    }
+  }
+
+  void _clearAlmacenFilter() {
+    setState(() {
+      _selectedAlmacen = null;
+      _filterSalidas();
+    });
+  }
+
+  Future<void> _selectMonth(BuildContext context) async {
+    DateTime? tempSelectedMonth;
+
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Seleccionar Mes para Todas las Salidas'),
+              content: SizedBox(
+                width: 300,
+                height: 400,
+                child: Column(
+                  children: [
+                    // Selector de año
+                    DropdownButton<int>(
+                      value: tempSelectedMonth?.year ?? DateTime.now().year,
+                      items:
+                          List.generate(
+                            5,
+                            (index) => DateTime.now().year - 2 + index,
+                          ).map((year) {
+                            return DropdownMenuItem<int>(
+                              value: year,
+                              child: Text(year.toString()),
+                            );
+                          }).toList(),
+                      onChanged: (year) {
+                        if (year != null) {
+                          setState(() {
+                            tempSelectedMonth = DateTime(
+                              year,
+                              tempSelectedMonth?.month ?? DateTime.now().month,
+                              1,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    // Selector de mes
+                    Expanded(
+                      child: GridView.count(
+                        crossAxisCount: 4,
+                        children: List.generate(12, (index) {
+                          final month = index + 1;
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                tempSelectedMonth = DateTime(
+                                  tempSelectedMonth?.year ??
+                                      DateTime.now().year,
+                                  month,
+                                  1,
+                                );
+                              });
+                            },
+                            child: Card(
+                              color: tempSelectedMonth?.month == month
+                                  ? Colors.green[100]
+                                  : null,
+                              child: Center(
+                                child: Text(
+                                  DateFormat(
+                                    'MMM',
+                                    'es_ES',
+                                  ).format(DateTime(2020, month)),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Cancelar'),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                TextButton(
+                  child: const Text('Aceptar'),
+                  onPressed: () {
+                    if (tempSelectedMonth != null) {
+                      setState(() {
+                        _selectedMonth = DateTime(
+                          tempSelectedMonth!.year,
+                          tempSelectedMonth!.month,
+                          1, // Siempre día 1
+                        );
+                      });
+                      Navigator.pop(context);
+                      _generateExcel();
+                      //_filterByMonth();
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _generateExcel() async {
+    if (_selectedMonth == null || _filteredSalidas.isEmpty) {
+      showAdvertence(context, 'No hay datos para exportar');
+      return;
+    }
+    setState(() => _isGeneratingExcel = true);
+    try {
+      await ExcelSalidasMes.generateExcelSalidasMes(
+        selectedMonth: _selectedMonth,
+        filteredSalidas: _filteredSalidas,
+        juntasController: _juntasController,
+        context: context,
+        ccontablesController: _ccontablesController,
+      );
+    } catch (e) {
+      print('_generateExcel | ListSalidaPage: $e');
+    } finally {
+      setState(() => _isGeneratingExcel = false);
+    }
+  }
+
+  Widget _buildPaginationControls() {
+    if (_filteredSalidas.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back_ios),
+            onPressed: _currentPage > 1
+                ? () => setState(() => _currentPage--)
+                : null,
+          ),
+          Text(
+            'Página $_currentPage de $_totalPages',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          IconButton(
+            icon: const Icon(Icons.arrow_forward_ios),
+            onPressed: _currentPage < _totalPages
+                ? () => setState(() => _currentPage++)
+                : null,
+          ),
+          const SizedBox(width: 16),
+          DropdownButton<int>(
+            value: _itemsPerPage,
+            items: [10, 20, 50, 100].map((value) {
+              return DropdownMenuItem<int>(
+                value: value,
+                child: Text('$value por página'),
+              );
+            }).toList(),
+            onChanged: (value) {
+              setState(() {
+                _itemsPerPage = value!;
+                _currentPage = 1;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Lista de Salidas',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+      ),
+      body: _isLoading
+          ? Center(
+              child: CircularProgressIndicator(color: Colors.blue.shade900),
+            )
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Row(
+                    children: [
+                      //Folio
+                      Expanded(
+                        child: CustomTextFielTexto(
+                          controller: _searchController,
+                          labelText: 'Buscar por Folio u OST',
+                          prefixIcon: Icons.search,
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      //  Padron
+                      Expanded(
+                        child: CustomAutocompleteField<Padron>(
+                          value: _selectedPadron != null
+                              ? _padrones.firstWhere(
+                                  (padron) =>
+                                      padron.idPadron.toString() ==
+                                      _selectedPadron,
+                                  orElse: () =>
+                                      Padron(idPadron: 0, padronNombre: 'N/A'),
+                                )
+                              : null,
+                          labelText: 'Buscar Padron',
+                          items: _padrones,
+                          prefixIcon: Icons.search,
+                          onChanged: (Padron? newValue) {
+                            setState(() {
+                              _selectedPadron = newValue?.idPadron.toString();
+                            });
+                            _filterSalidas();
+                          },
+                          itemLabelBuilder: (padron) =>
+                              '${padron.idPadron ?? 0} - ${padron.padronNombre ?? 'N/A'}',
+                          itemValueBuilder: (padron) =>
+                              padron.idPadron.toString(),
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+
+                      //User Asignado
+                      Expanded(
+                        child: CustomAutocompleteField<Users>(
+                          value: _selectedUserAsignado != null
+                              ? _userAsignado.firstWhere(
+                                  (userAs) =>
+                                      userAs.id_User.toString() ==
+                                      _selectedUserAsignado,
+                                  orElse: () =>
+                                      Users(id_User: 0, user_Name: 'N/A'),
+                                )
+                              : null,
+                          labelText: 'Buscar Usuario Asignado',
+                          items: _userAsignado,
+                          prefixIcon: Icons.search,
+                          onChanged: (Users? newValue) {
+                            setState(() {
+                              _selectedUserAsignado = newValue?.id_User
+                                  .toString();
+                            });
+                            _filterSalidas();
+                          },
+                          itemLabelBuilder: (userAs) =>
+                              '${userAs.id_User ?? 0} - ${userAs.user_Name ?? 'N/A'}',
+                          itemValueBuilder: (userAs) =>
+                              userAs.id_User.toString(),
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+
+                      //Fecha
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _selectDateRange(context),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color.fromARGB(
+                              255,
+                              201,
+                              230,
+                              242,
+                            ),
+                          ),
+                          icon: Icon(
+                            Icons.calendar_today,
+                            color: Colors.blue.shade900,
+                          ),
+                          label: Text(
+                            _startDate != null && _endDate != null
+                                ? 'Desde: ${DateFormat('yyyy-MM-dd').format(_startDate!)} Hasta: ${DateFormat('yyyy-MM-dd').format(_endDate!)}'
+                                : 'Seleccionar rango de fechas',
+                            style: TextStyle(
+                              color: Colors.blue.shade900,
+                              fontWeight: FontWeight.bold,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (_startDate != null || _endDate != null) ...[
+                        IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _startDate = null;
+                              _endDate = null;
+                              _filterSalidas();
+                            });
+                          },
+                        ),
+                      ],
+                      const SizedBox(width: 10),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Row(
+                    children: [
+                      //  Juntas
+                      Expanded(
+                        child: CustomAutocompleteField<Juntas>(
+                          value: _selectedJunta != null
+                              ? _juntas.firstWhere(
+                                  (junta) =>
+                                      junta.idJunta.toString() ==
+                                      _selectedJunta,
+                                  orElse: () =>
+                                      Juntas(idJunta: 0, juntaNombre: 'N/A'),
+                                )
+                              : null,
+                          labelText: 'Buscar Junta',
+                          items: _juntas,
+                          onChanged: (Juntas? newValue) {
+                            setState(() {
+                              _selectedJunta = newValue?.idJunta.toString();
+                            });
+                            _filterSalidas();
+                          },
+                          itemLabelBuilder: (junta) =>
+                              '${junta.idJunta ?? 0} - ${junta.juntaNombre ?? 'N/A'}',
+                          itemValueBuilder: (junta) => junta.idJunta.toString(),
+                          prefixIcon: Icons.search,
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+
+                      //  Almacenes
+                      Expanded(
+                        child: CustomListaDesplegableTipo<Almacenes>(
+                          value: _selectedAlmacen != null
+                              ? _almacenes.firstWhere(
+                                  (almacen) =>
+                                      almacen.id_Almacen.toString() ==
+                                      _selectedAlmacen,
+                                )
+                              : null,
+                          labelText: 'Seleccionar Almacen',
+                          items: _almacenes,
+                          onChanged: (Almacenes? newValue) {
+                            setState(() {
+                              _selectedAlmacen = newValue?.id_Almacen
+                                  .toString();
+                            });
+                            _filterSalidas();
+                          },
+                          itemLabelBuilder: (entidad) =>
+                              entidad.almacen_Nombre ?? '',
+                        ),
+                      ),
+                      if (_selectedAlmacen != null)
+                        IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.red),
+                          onPressed: _clearAlmacenFilter,
+                        ),
+                      const SizedBox(width: 20),
+
+                      //  Colonias
+                      Expanded(
+                        child: CustomAutocompleteField<Colonias>(
+                          value: _selectedColonia != null
+                              ? _colonias.firstWhere(
+                                  (colonia) =>
+                                      colonia.idColonia.toString() ==
+                                      _selectedColonia,
+                                  orElse: () => Colonias(
+                                    idColonia: 0,
+                                    nombreColonia: 'N/A',
+                                  ),
+                                )
+                              : null,
+                          labelText: 'Buscar Colonia',
+                          items: _colonias,
+                          onChanged: (Colonias? newValue) {
+                            setState(() {
+                              _selectedColonia = newValue?.idColonia.toString();
+                            });
+                            _filterSalidas();
+                          },
+                          itemLabelBuilder: (colonia) =>
+                              '${colonia.idColonia ?? 0} - ${colonia.nombreColonia ?? 'N/A'}',
+                          itemValueBuilder: (colonia) =>
+                              colonia.idColonia.toString(),
+                          prefixIcon: Icons.search,
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+
+                      //  Calles
+                      Expanded(
+                        child: CustomAutocompleteField<Calles>(
+                          value: _selectedCalle != null
+                              ? _calles.firstWhere(
+                                  (calle) =>
+                                      calle.idCalle.toString() ==
+                                      _selectedCalle,
+                                  orElse: () =>
+                                      Calles(idCalle: 0, calleNombre: 'N/A'),
+                                )
+                              : null,
+                          labelText: 'Buscar Calle',
+                          items: _calles,
+                          onChanged: (Calles? newValue) {
+                            setState(() {
+                              _selectedCalle = newValue?.idCalle.toString();
+                            });
+                            _filterSalidas();
+                          },
+                          itemLabelBuilder: (calle) =>
+                              '${calle.idCalle ?? 0} - ${calle.calleNombre ?? 'N/A'}',
+                          itemValueBuilder: (calle) => calle.idCalle.toString(),
+                          prefixIcon: Icons.search,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: _isLoading
+                      ? Center(
+                          child: CircularProgressIndicator(
+                            color: Colors.blue.shade900,
+                          ),
+                        )
+                      : _buildListView(),
+                ),
+                const SizedBox(height: 30),
+              ],
+            ),
+      floatingActionButton: Stack(
+        children: [
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (_showExportOptions) ...[
+                  _buildExportOption(
+                    icon: Icons.download,
+                    color: Colors.green.shade900,
+                    label: 'Todas las Salidas',
+                    onTap: () => _selectMonth(context),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExportOption(
+                    icon: Icons.download,
+                    color: Colors.purple.shade900,
+                    label: 'Juntas Especiales',
+                    onTap: () => _selectMonthForEspeciales(context),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExportOption(
+                    icon: Icons.download,
+                    color: Colors.orange.shade900,
+                    label: 'Juntas Rurales',
+                    onTap: () => _selectMonthForRurales(context),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                FloatingActionButton(
+                  backgroundColor: Colors.green.shade900,
+                  onPressed: () {
+                    setState(() {
+                      _showExportOptions = !_showExportOptions;
+                    });
+                  },
+                  child: _showExportOptions
+                      ? const Icon(Icons.close, color: Colors.white)
+                      : SvgPicture.asset(
+                          'assets/icons/excel.svg',
+                          width: 30,
+                          height: 30,
+                          color: Colors.white,
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExportOption({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        setState(() => _showExportOptions = false);
+        onTap();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        width: 200,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListView() {
+    if (_filteredSalidas.isEmpty) {
+      return Center(
+        child: Text(
+          _searchController.text.isNotEmpty
+              ? 'No hay salidas que coincidan con el folio'
+              : (_startDate != null || _endDate != null)
+              ? 'No hay salidas que coincidan con el rango de fechas'
+              : 'No hay salidas disponibles',
+        ),
+      );
+    }
+
+    final groupedSalidas = _paginatedGroupedSalidas;
+
+    // Map<String, List<Salidas>> gorupSalidas = {};
+    // for (var salida in _paginatedSalidas) {
+    //   gorupSalidas.putIfAbsent(
+    //     salida.salida_CodFolio!,
+    //     () => [],
+    //   );
+    //   gorupSalidas[salida.salida_CodFolio]!.add(salida);
+    // }
+
+    return Column(
+      children: [
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.all(10),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 450,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1.6,
+            ),
+            itemCount: groupedSalidas.keys.length,
+            itemBuilder: (context, index) {
+              if (index >= groupedSalidas.keys.length) {
+                return const SizedBox.shrink();
+              }
+              String codFolio = groupedSalidas.keys.elementAt(index);
+              List<SalidaLista> salidas = groupedSalidas[codFolio]!;
+
+              double totalUnidades = salidas.fold(
+                0,
+                (sum, item) => sum + (item.salida_Unidades ?? 0),
+              );
+
+              double totalCosto = salidas.fold(
+                0,
+                (sum, item) => sum + (item.salida_Costo ?? 0),
+              );
+
+              final salidaPrincipal = salidas.first;
+              final salida = salidaPrincipal;
+
+              // ignore: unused_local_variable
+              final producto = _productosCache[salida.idProducto];
+              final user = _usersCache[salida.id_User];
+
+              Color colorCard = salida.salida_Estado == false
+                  ? Colors.red.shade100
+                  : Colors.blue.shade100;
+
+              return Card(
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+                color: colorCard,
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: InkWell(
+                  onTap: () async {
+                    final todasSalidasFolio = await SalidasController()
+                        .getSalidaByFolio(codFolio);
+                    if (todasSalidasFolio.isNotEmpty) {
+                      final almacen = _almacenes.firstWhere(
+                        (alm) => alm.id_Almacen == salida.id_Almacen,
+                        orElse: () => Almacenes(
+                          id_Almacen: 0,
+                          almacen_Nombre: 'Desconocido',
+                        ),
+                      );
+
+                      final junta = _juntas.firstWhere(
+                        (jnt) => jnt.idJunta == salida.id_Junta,
+                        orElse: () =>
+                            Juntas(idJunta: 0, juntaNombre: 'Deconocido'),
+                      );
+
+                      final padron = _padrones.firstWhere(
+                        (pdr) => pdr.idPadron == salida.idPadron,
+                        orElse: () =>
+                            Padron(idPadron: 0, padronNombre: 'Desconocido'),
+                      );
+
+                      final ordenServicio = _ordenesServicios.firstWhere(
+                        (ordenS) =>
+                            ordenS.idOrdenServicio == salida.idOrdenServicio,
+                        orElse: () => OrdenServicio(folioOS: 'Sin folio OS'),
+                      );
+
+                      final colonia = _colonias.firstWhere(
+                        (colonia) => colonia.idColonia == salida.idColonia,
+                        orElse: () => Colonias(
+                          idColonia: 0,
+                          nombreColonia: 'Desconocido',
+                        ),
+                      );
+
+                      final calle = _calles.firstWhere(
+                        (calles) => calles.idCalle == salida.idCalle,
+                        orElse: () =>
+                            Calles(idCalle: 0, calleNombre: 'Desconocida'),
+                      );
+
+                      final userAsig = _userAsignado.firstWhere(
+                        (uas) => uas.id_User == salida.id_User_Asignado,
+                        orElse: () =>
+                            Users(id_User: 0, user_Name: 'Desconocido'),
+                      );
+
+                      final userAutoriza = _userAutoriza.firstWhere(
+                        (usAu) => usAu.id_User == salida.idUserAutoriza,
+                        orElse: () =>
+                            Users(id_User: 0, user_Name: 'No especificado'),
+                      );
+
+                      final userSalida = _userCreoSalida.firstWhere(
+                        (usCS) => usCS.id_User == salida.id_User,
+                        orElse: () => Users(id_User: 0, user_Name: 'N/A'),
+                      );
+
+                      final contratista = _contratistas.firstWhere(
+                        (contratista) =>
+                            contratista.idContratista == salida.idContratista,
+                        orElse: () => Contratistas(
+                          idContratista: 0,
+                          contratistaNombre: 'N/A',
+                          contratistaDireccion: 'N/A',
+                          contratistaNumeroCuenta: 'N/A',
+                          contratistaTelefono: 'N/A',
+                        ),
+                      );
+
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => DetailsSalidaPage(
+                            salidas: todasSalidasFolio,
+                            almacen: almacen,
+                            junta: junta,
+                            padron: padron,
+                            calle: calle,
+                            colonia: colonia,
+                            user: widget.userName!,
+                            userAsignado: userAsig,
+                            userAutoriza: userAutoriza,
+                            userCreoSalida: userSalida,
+                            ordenServicio: ordenServicio,
+                            contratista: contratista,
+                            userRole: widget.userRole!,
+                            onDocumentUploaded: () async {
+                              await _reloadData();
+                            },
+                          ),
+                        ),
+                      );
+                      if (result == true) {
+                        await _reloadData();
+                      }
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Folio $codFolio',
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              user != null
+                                  ? Text(
+                                      'Realizado por: ${user.user_Name}',
+                                      style: const TextStyle(fontSize: 15),
+                                      overflow: TextOverflow.ellipsis,
+                                    )
+                                  : const Text('Usuario no encontrado'),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Total unidades: $totalUnidades',
+                                style: const TextStyle(fontSize: 15),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Costo: \$${totalCosto.toStringAsFixed(2)}',
+                                style: const TextStyle(fontSize: 15),
+                              ),
+                              const SizedBox(height: 10),
+                              if (salidaPrincipal.salidaFolioOST != null) ...[
+                                Chip(
+                                  label: Text(
+                                    'OST: ${salidaPrincipal.salidaFolioOST}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  backgroundColor: Colors.blue.shade900,
+                                ),
+                              ],
+                              // Text(
+                              //   'Referencia: ${salida.salida_Referencia ?? 'No disponible'}',
+                              //   overflow: TextOverflow.ellipsis,
+                              //   style: const TextStyle(
+                              //     fontSize: 15,
+                              //   ),
+                              // ),
+                            ],
+                          ),
+                        ),
+
+                        // En el Card de cada salida, agrega este icono:
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: SizedBox(
+                                width: 82,
+                                child: Text(
+                                  salida.salida_Fecha ?? 'Sin Fecha',
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+
+                            //  Documento de firmas
+                            if (_tieneDocumentoFirmas(salidas))
+                              const Column(
+                                children: [
+                                  Icon(
+                                    Icons.description,
+                                    color: Colors.green,
+                                    size: 30,
+                                  ),
+                                ],
+                              )
+                            else
+                              const Column(
+                                children: [
+                                  Icon(
+                                    Icons.description,
+                                    color: Colors.red,
+                                    size: 30,
+                                  ),
+                                ],
+                              ),
+                            const SizedBox(height: 20),
+
+                            //  Documento de pago
+                            if (_tieneDocumentoPago(salidas))
+                              const Column(
+                                children: [
+                                  Icon(
+                                    Icons.attach_money,
+                                    color: Colors.green,
+                                    size: 30,
+                                  ),
+                                ],
+                              )
+                            else
+                              const Column(
+                                children: [
+                                  Icon(
+                                    Icons.money_off,
+                                    color: Colors.red,
+                                    size: 30,
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        _buildPaginationControls(),
+      ],
+    );
+  }
+
+  bool _tieneDocumentoFirmas(List<SalidaLista> salidasDelFolio) {
+    return salidasDelFolio.any((s) => s.salida_DocumentoFirma == true);
+  }
+
+  bool _tieneDocumentoPago(List<SalidaLista> salidaDelFolio) {
+    return salidaDelFolio.any((s) => s.salida_Pagado == true);
+  }
+
+  String? idUserDelete;
+
+  // Método para seleccionar mes para juntas especiales
+  Future<void> _selectMonthForEspeciales(BuildContext context) async {
+    DateTime? tempSelectedMonth;
+
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Seleccionar Mes para Juntas Especiales'),
+              content: SizedBox(
+                width: 300,
+                height: 400,
+                child: Column(
+                  children: [
+                    // Selector de año
+                    DropdownButton<int>(
+                      value: tempSelectedMonth?.year ?? DateTime.now().year,
+                      items:
+                          List.generate(
+                            5,
+                            (index) => DateTime.now().year - 2 + index,
+                          ).map((year) {
+                            return DropdownMenuItem<int>(
+                              value: year,
+                              child: Text(year.toString()),
+                            );
+                          }).toList(),
+                      onChanged: (year) {
+                        if (year != null) {
+                          setState(() {
+                            tempSelectedMonth = DateTime(
+                              year,
+                              tempSelectedMonth?.month ?? DateTime.now().month,
+                              1,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    // Selector de mes
+                    Expanded(
+                      child: GridView.count(
+                        crossAxisCount: 4,
+                        children: List.generate(12, (index) {
+                          final month = index + 1;
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                tempSelectedMonth = DateTime(
+                                  tempSelectedMonth?.year ??
+                                      DateTime.now().year,
+                                  month,
+                                  1,
+                                );
+                              });
+                            },
+                            child: Card(
+                              color: tempSelectedMonth?.month == month
+                                  ? Colors.purple[100]
+                                  : null,
+                              child: Center(
+                                child: Text(
+                                  DateFormat(
+                                    'MMM',
+                                    'es_ES',
+                                  ).format(DateTime(2020, month)),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Cancelar'),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                TextButton(
+                  child: const Text('Aceptar'),
+                  onPressed: () {
+                    if (tempSelectedMonth != null) {
+                      setState(() {
+                        _selectedMonth = DateTime(
+                          tempSelectedMonth!.year,
+                          tempSelectedMonth!.month,
+                          1,
+                        );
+                      });
+                      Navigator.pop(context);
+                      _generateExcelJuntasEspeciales();
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _selectMonthForRurales(BuildContext context) async {
+    DateTime? tempSelectedMonth;
+
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Seleccionar Mes para Juntas Rurales'),
+              content: SizedBox(
+                width: 300,
+                height: 400,
+                child: Column(
+                  children: [
+                    // Selector de año
+                    DropdownButton<int>(
+                      value: tempSelectedMonth?.year ?? DateTime.now().year,
+                      items:
+                          List.generate(
+                            5,
+                            (index) => DateTime.now().year - 2 + index,
+                          ).map((year) {
+                            return DropdownMenuItem<int>(
+                              value: year,
+                              child: Text(year.toString()),
+                            );
+                          }).toList(),
+                      onChanged: (year) {
+                        if (year != null) {
+                          setState(() {
+                            tempSelectedMonth = DateTime(
+                              year,
+                              tempSelectedMonth?.month ?? DateTime.now().month,
+                              1,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    // Selector de mes
+                    Expanded(
+                      child: GridView.count(
+                        crossAxisCount: 4,
+                        children: List.generate(12, (index) {
+                          final month = index + 1;
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                tempSelectedMonth = DateTime(
+                                  tempSelectedMonth?.year ??
+                                      DateTime.now().year,
+                                  month,
+                                  1,
+                                );
+                              });
+                            },
+                            child: Card(
+                              color: tempSelectedMonth?.month == month
+                                  ? Colors.orange[100]
+                                  : null,
+                              child: Center(
+                                child: Text(
+                                  DateFormat(
+                                    'MMM',
+                                    'es_ES',
+                                  ).format(DateTime(2020, month)),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Cancelar'),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                TextButton(
+                  child: const Text('Aceptar'),
+                  onPressed: () {
+                    if (tempSelectedMonth != null) {
+                      setState(() {
+                        _selectedMonth = DateTime(
+                          tempSelectedMonth!.year,
+                          tempSelectedMonth!.month,
+                          1,
+                        );
+                      });
+                      Navigator.pop(context);
+                      _generateExcelJuntasRurales();
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Método para generar Excel de juntas especiales
+  Future<void> _generateExcelJuntasEspeciales() async {
+    if (_selectedMonth == null) return;
+
+    setState(() => _isGeneratingExcel = true);
+    try {
+      await ExcelSalidasMes.generateExcelJuntasEspeciales(
+        selectedMonth: _selectedMonth,
+        juntasController: _juntasController,
+        allSalidas: _allSalidas,
+        productosController: _productosController,
+        context: context,
+        ccontablesController: _ccontablesController,
+      );
+    } catch (e) {
+      print('Error al generar Excel Juntas Especiales: $e');
+    } finally {
+      setState(() => _isGeneratingExcel = false);
+    }
+  }
+
+  // Método para generar Excel de juntas regulares
+  Future<void> _generateExcelJuntasRurales() async {
+    if (_selectedMonth == null) return;
+
+    setState(() => _isGeneratingExcel = true);
+    try {
+      await ExcelSalidasMes.generateExcelJuntasRurales(
+        productosController: _productosController,
+        juntasController: _juntasController,
+        selectedMonth: _selectedMonth,
+        allSalidas: _allSalidas,
+        context: context,
+        ccontablesController: _ccontablesController,
+      );
+    } catch (e) {
+      print('Error al generar Excel Juntas Regulares: $e');
+    } finally {
+      setState(() => _isGeneratingExcel = false);
+    }
+  }
+}
